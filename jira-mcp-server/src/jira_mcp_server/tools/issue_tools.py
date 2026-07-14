@@ -41,6 +41,12 @@ def _get_field_schema(project: str, issue_type: str) -> List[FieldSchema]:
     field_schemas: List[FieldSchema] = []
     for field_data in raw_schema:
         field_key = field_data.get("key", "")
+        # "project" and "issuetype" are always constructed internally as nested
+        # objects ({"key": ...} / {"name": ...}), never validated as raw strings.
+        # createmeta reports no explicit schema type for them, which would
+        # otherwise default to FieldType.STRING and fail validation unconditionally.
+        if field_key in ("project", "issuetype"):
+            continue
         field_name = field_data.get("name", field_key)
         field_required = field_data.get("required", False)
 
@@ -112,7 +118,10 @@ def jira_issue_create(
     if priority:
         fields["priority"] = {"name": sanitize_text(priority)}
     if assignee:
-        fields["assignee"] = {"name": sanitize_text(assignee)}
+        # Jira Cloud deprecated the "name" user identifier in favor of "accountId"
+        # (this instance runs in GDPR strict mode, so "name" resolves to nothing
+        # and the assignee silently fails to apply).
+        fields["assignee"] = {"accountId": sanitize_text(assignee)}
     if labels:
         fields["labels"] = [sanitize_text(label) for label in labels]
     if due_date:
@@ -185,7 +194,10 @@ def jira_subtask_create(
     if priority:
         fields["priority"] = {"name": sanitize_text(priority)}
     if assignee:
-        fields["assignee"] = {"name": sanitize_text(assignee)}
+        # Jira Cloud deprecated the "name" user identifier in favor of "accountId"
+        # (this instance runs in GDPR strict mode, so "name" resolves to nothing
+        # and the assignee silently fails to apply).
+        fields["assignee"] = {"accountId": sanitize_text(assignee)}
     if labels:
         fields["labels"] = [sanitize_text(label) for label in labels]
     if due_date:
@@ -224,7 +236,10 @@ def jira_issue_update(
     if priority is not None:
         fields["priority"] = {"name": sanitize_text(priority)}
     if assignee is not None:
-        fields["assignee"] = {"name": sanitize_text(assignee)}
+        # Jira Cloud deprecated the "name" user identifier in favor of "accountId"
+        # (this instance runs in GDPR strict mode, so "name" resolves to nothing
+        # and the assignee silently fails to apply).
+        fields["assignee"] = {"accountId": sanitize_text(assignee)}
     if labels is not None:
         fields["labels"] = [sanitize_text(label) for label in labels]
     if due_date is not None:

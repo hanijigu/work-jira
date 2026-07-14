@@ -148,11 +148,24 @@ class FieldValidator:
             if not isinstance(value, (int, float)):
                 return False, f"Field '{schema.name}' must be a number, got {type(value).__name__}"
         elif schema.type == FieldType.STRING:
-            if not isinstance(value, str):
+            # Some Jira reference fields (Team, and other custom picker types) are
+            # reported by createmeta without a recognizable schema type and default
+            # here to STRING, but the API always requires a reference object for
+            # them. Accept a dict if it looks like a genuine Jira reference object
+            # rather than rejecting every non-string value outright.
+            is_reference_object = isinstance(value, dict) and any(
+                k in value for k in ("id", "name", "value", "key")
+            )
+            if not isinstance(value, str) and not is_reference_object:
                 return False, f"Field '{schema.name}' must be a string, got {type(value).__name__}"
         elif schema.type == FieldType.OPTION:
             if schema.allowed_values:
-                if value not in schema.allowed_values:
+                # Jira's REST API expects option fields as {"value": ...} / {"id": ...}
+                # objects, not bare strings; unwrap before comparing to allowed_values.
+                check_value = value
+                if isinstance(value, dict):
+                    check_value = value.get("value") or value.get("name") or value.get("id")
+                if check_value not in schema.allowed_values:
                     allowed_str = ", ".join(schema.allowed_values)
                     return (
                         False,
@@ -163,7 +176,10 @@ class FieldValidator:
                 return False, f"Field '{schema.name}' must be a list"
             if schema.allowed_values:
                 for item in value:
-                    if item not in schema.allowed_values:
+                    check_item = item
+                    if isinstance(item, dict):
+                        check_item = item.get("value") or item.get("name") or item.get("id")
+                    if check_item not in schema.allowed_values:
                         allowed_str = ", ".join(schema.allowed_values)
                         return (
                             False,
