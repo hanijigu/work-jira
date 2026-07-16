@@ -223,14 +223,11 @@ class JiraClient:
         try:
             response = self._request("GET", url, params=params)
             if response.status_code == 404:
-                raise ValueError(
-                    f"Project schema not found. Possible causes:\n"
-                    f"  - Project '{project_key}' does not exist\n"
-                    f"  - You don't have permission to access project '{project_key}'\n"
-                    f"  - Issue type '{issue_type}' is not available in this project\n"
-                    f"  - The createmeta endpoint may not be available in your Jira version\n"
-                    f"Please verify the project key and issue type are correct."
-                )
+                # Some Jira Data Center versions have removed the bulk createmeta
+                # endpoint entirely (it 404s even with no params at all), unlike
+                # Cloud where this still works. Fall back to the granular
+                # per-issue-type endpoint that replaced it.
+                return self._get_project_schema_granular(project_key, issue_type)
             elif response.status_code != 200:
                 self._handle_error(response)
             data = response.json()
@@ -253,6 +250,37 @@ class JiraClient:
             return [{"key": k, **v} for k, v in fields.items()]
         except httpx.TimeoutException:
             raise ValueError(f"Timeout getting schema for {project_key}/{issue_type}")
+
+    def _get_project_schema_granular(self, project_key: str, issue_type: str) -> List[Dict[str, Any]]:
+        types_url = f"{self.base_url}/rest/api/2/issue/createmeta/{project_key}/issuetypes"
+        response = self._request("GET", types_url, params={"maxResults": 200})
+        if response.status_code != 200:
+            self._handle_error(response)
+        matches = [
+            it for it in response.json().get("values", [])
+            if it.get("name", "").lower() == issue_type.lower()
+        ]
+        if not matches:
+            raise ValueError(
+                f"Issue type '{issue_type}' not found in project '{project_key}'.\n"
+                f"Common issue types: Task, Bug, Story, Epic\n"
+                f"Note: Issue type names are case-sensitive"
+            )
+        issue_type_id = matches[0]["id"]
+
+        fields_url = f"{self.base_url}/rest/api/2/issue/createmeta/{project_key}/issuetypes/{issue_type_id}"
+        values: List[Dict[str, Any]] = []
+        start_at = 0
+        while True:
+            response = self._request("GET", fields_url, params={"startAt": start_at, "maxResults": 100})
+            if response.status_code != 200:
+                self._handle_error(response)
+            page = response.json()
+            values.extend(page.get("values", []))
+            if page.get("isLast", True):
+                break
+            start_at += len(page.get("values", []))
+        return [{"key": v.get("fieldId", ""), **v} for v in values]
 
     def search_issues(
         self, jql: str, max_results: int = 100, start_at: int = 0, fields: str | None = None
