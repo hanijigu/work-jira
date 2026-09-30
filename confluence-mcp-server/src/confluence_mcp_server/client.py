@@ -468,13 +468,22 @@ class ConfluenceClient:
             raise ValueError(
                 f"Attachment {title} is {size} bytes, exceeds {max_size} byte limit"
             )
-        download_url = f"{self.base_url}{download_path}"
+        # PATCH: _links.download is relative to the Confluence context path
+        # ("/wiki" on Cloud). Prefer _links.base, which already includes it.
+        link_base = links.get("base")
+        if link_base:
+            download_url = f"{link_base.rstrip('/')}{download_path}"
+        else:
+            download_url = f"{self.base_url}{links.get('context', '')}{download_path}"
         headers = self._get_headers()
         headers.pop("Content-Type", None)
         logger.debug("-> GET %s (download)", download_url)
         start = time.monotonic()
         try:
-            with httpx.Client(timeout=self.timeout, verify=self.verify_ssl) as client:
+            # PATCH: Cloud 302-redirects attachment bytes to the media API.
+            with httpx.Client(
+                timeout=self.timeout, verify=self.verify_ssl, follow_redirects=True
+            ) as client:
                 response = client.get(download_url, headers=headers)
                 elapsed_ms = (time.monotonic() - start) * 1000
                 logger.debug("<- %s GET %s (%.0fms)", response.status_code, download_url, elapsed_ms)

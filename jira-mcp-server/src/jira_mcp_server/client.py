@@ -285,10 +285,24 @@ class JiraClient:
     def search_issues(
         self, jql: str, max_results: int = 100, start_at: int = 0, fields: str | None = None
     ) -> Dict[str, Any]:
-        url = f"{self.base_url}/rest/api/2/search"
-        data: Dict[str, Any] = {"jql": jql, "maxResults": max_results, "startAt": start_at}
-        if fields:
-            data["fields"] = fields.split(",")
+        # PATCH: Atlassian removed POST /rest/api/2/search and /rest/api/3/search on
+        # Cloud (CHANGE-2046); Cloud must use /rest/api/3/search/jql. Data Center still
+        # serves the v2 endpoint, so only Cloud is switched.
+        data: Dict[str, Any]
+        if self._auth_type == AuthType.CLOUD:
+            url = f"{self.base_url}/rest/api/3/search/jql"
+            # v3 returns only ["id"] unless fields are requested explicitly, and it
+            # paginates with nextPageToken rather than startAt, so start_at is ignored.
+            data = {
+                "jql": jql,
+                "maxResults": max_results,
+                "fields": fields.split(",") if fields else ["*navigable"],
+            }
+        else:
+            url = f"{self.base_url}/rest/api/2/search"
+            data = {"jql": jql, "maxResults": max_results, "startAt": start_at}
+            if fields:
+                data["fields"] = fields.split(",")
         try:
             response = self._request("POST", url, json=data)
             if response.status_code != 200:
