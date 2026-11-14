@@ -338,6 +338,22 @@ class TestFormatPRComment:
         assert result["text"] == "Nice work"
         assert result["createdDate"] == "2024-01-01"
 
+    def test_inline_comment_keeps_text_anchor_and_replies(self) -> None:
+        raw = {
+            "id": 30,
+            "text": "x" * 600,
+            "state": "OPEN",
+            "anchor": {"path": "a.md", "line": 7, "orphaned": True},
+            "comments": [{"id": 31, "text": "reply"}],
+        }
+        result = format_pr_comment(raw, _make_config())
+        assert result["text"] == "x" * 600
+        assert result["state"] == "OPEN"
+        assert result["path"] == "a.md"
+        assert result["line"] == 7
+        assert result["outdated"] is True
+        assert result["replies"][0]["text"] == "reply"
+
 
 class TestFormatPRComments:
     def test_basic(self) -> None:

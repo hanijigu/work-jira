@@ -429,6 +429,13 @@ class BitbucketClient:
             payload["description"] = description
         if self._auth_type != AuthType.CLOUD:
             payload["version"] = pr.get("version", 0)
+            # Preserve existing reviewers — Bitbucket DC's PUT silently clears
+            # them when the field is omitted, which produces noisy activity-log
+            # entries on description/title-only updates. Replaying the current
+            # reviewer list is a no-op on the server when the set is unchanged.
+            existing_reviewers = pr.get("reviewers", [])
+            if existing_reviewers:
+                payload["reviewers"] = existing_reviewers
         try:
             response = self._request("PUT", url, json=payload)
             if response.status_code != 200:
@@ -520,12 +527,32 @@ class BitbucketClient:
         else:
             url = f"{self._dc_project_repo_url(project, repo)}/pull-requests/{pr_id}/activities"
         try:
+            if self._auth_type != AuthType.CLOUD:
+                # The DC endpoint is paged (25 per page); fetch every page.
+                return self._dc_get_all_pages(url)
             response = self._request("GET", url)
             if response.status_code != 200:
                 self._handle_error(response)
             return response.json()  # type: ignore[no-any-return]
         except httpx.TimeoutException:
             raise ValueError(f"Timeout getting PR {pr_id} activities")
+
+    def _dc_get_all_pages(self, url: str, page_limit: int = 100, max_pages: int = 50) -> Dict[str, Any]:
+        """Follow Bitbucket DC paging (start/nextPageStart) and merge the pages."""
+        values: list[Any] = []
+        start = 0
+        last = False
+        for _ in range(max_pages):
+            response = self._request("GET", url, params={"limit": page_limit, "start": start})
+            if response.status_code != 200:
+                self._handle_error(response)
+            page = response.json()
+            values.extend(page.get("values", []))
+            last = bool(page.get("isLastPage", True))
+            if last or page.get("nextPageStart") is None:
+                break
+            start = page["nextPageStart"]
+        return {"size": len(values), "start": 0, "limit": len(values), "isLastPage": last, "values": values}
 
     # PR Comment operations
 
@@ -555,6 +582,24 @@ class BitbucketClient:
         else:
             url = f"{self._dc_project_repo_url(project, repo)}/pull-requests/{pr_id}/comments"
         try:
+            if self._auth_type != AuthType.CLOUD:
+                # DC /comments needs a file path, so build the list from the
+                # activity log: every top-level comment (general and inline) with its replies.
+                activities = self._dc_get_all_pages(
+                    f"{self._dc_project_repo_url(project, repo)}/pull-requests/{pr_id}/activities"
+                )
+                comments = []
+                for activity in activities.get("values", []):
+                    if activity.get("action") != "COMMENTED" or activity.get("commentAction") != "ADDED":
+                        continue
+                    comment = dict(activity.get("comment") or {})
+                    anchor = activity.get("commentAnchor") or comment.get("anchor")
+                    if anchor:
+                        comment["anchor"] = anchor
+                    comments.append(comment)
+                comments.sort(key=lambda c: c.get("createdDate") or 0)
+                return {"size": len(comments), "start": 0, "limit": len(comments),
+                        "isLastPage": activities.get("isLastPage", True), "values": comments}
             response = self._request("GET", url)
             if response.status_code != 200:
                 self._handle_error(response)

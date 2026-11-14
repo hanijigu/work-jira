@@ -682,6 +682,15 @@ class TestPROperations:
         put_payload = mock_req.call_args_list[1].kwargs["json"]
         assert put_payload["version"] == 3
         assert put_payload["title"] == "new"
+        assert "reviewers" not in put_payload
+
+    def test_update_pr_dc_keeps_reviewers(self, dc_client: BitbucketClient) -> None:
+        reviewers = [{"user": {"name": "alice"}}]
+        pr_data = {"id": 1, "version": 3, "reviewers": reviewers}
+        with patch.object(dc_client, "_request") as mock_req:
+            mock_req.side_effect = [_mock_response(200, pr_data), _mock_response(200, {"id": 1})]
+            dc_client.update_pr("PROJ", "repo", 1, description="d")
+        assert mock_req.call_args_list[1].kwargs["json"]["reviewers"] == reviewers
 
     def test_update_pr_cloud(self, cloud_client: BitbucketClient) -> None:
         pr_data = {"id": 1}
@@ -853,10 +862,28 @@ class TestPROperations:
 
     # --- get_pr_activities ---
     def test_get_pr_activities_dc(self, dc_client: BitbucketClient) -> None:
-        data = {"values": []}
+        data = {"values": [{"id": 1}], "isLastPage": True}
         with patch.object(dc_client, "_request", return_value=_mock_response(200, data)):
             result = dc_client.get_pr_activities("PROJ", "repo", 1)
-        assert result == data
+        assert result == {"size": 1, "start": 0, "limit": 1, "isLastPage": True, "values": [{"id": 1}]}
+
+    def test_get_pr_activities_dc_follows_pages(self, dc_client: BitbucketClient) -> None:
+        pages = [
+            _mock_response(200, {"values": [{"id": 1}], "isLastPage": False, "nextPageStart": 1}),
+            _mock_response(200, {"values": [{"id": 2}], "isLastPage": True}),
+        ]
+        with patch.object(dc_client, "_request", side_effect=pages) as mock_req:
+            result = dc_client.get_pr_activities("PROJ", "repo", 1)
+        assert [a["id"] for a in result["values"]] == [1, 2]
+        assert result["isLastPage"] is True
+        assert mock_req.call_args_list[1].kwargs["params"] == {"limit": 100, "start": 1}
+
+    def test_get_pr_activities_dc_stops_at_max_pages(self, dc_client: BitbucketClient) -> None:
+        page = _mock_response(200, {"values": [{"id": 1}], "isLastPage": False, "nextPageStart": 1})
+        with patch.object(dc_client, "_request", return_value=page):
+            result = dc_client._dc_get_all_pages("http://x", max_pages=2)
+        assert result["size"] == 2
+        assert result["isLastPage"] is False
 
     def test_get_pr_activities_cloud(self, cloud_client: BitbucketClient) -> None:
         data = {"values": []}
@@ -924,10 +951,30 @@ class TestPRCommentOperations:
 
     # --- list_pr_comments ---
     def test_list_pr_comments_dc(self, dc_client: BitbucketClient) -> None:
-        data = {"values": []}
+        data = {
+            "isLastPage": True,
+            "values": [
+                {"action": "APPROVED"},
+                {"action": "COMMENTED", "commentAction": "EDITED", "comment": {"id": 9}},
+                {
+                    "action": "COMMENTED",
+                    "commentAction": "ADDED",
+                    "comment": {"id": 2, "text": "inline", "createdDate": 20},
+                    "commentAnchor": {"path": "a.md", "line": 7},
+                },
+                {
+                    "action": "COMMENTED",
+                    "commentAction": "ADDED",
+                    "comment": {"id": 1, "text": "general", "createdDate": 10},
+                },
+            ],
+        }
         with patch.object(dc_client, "_request", return_value=_mock_response(200, data)):
             result = dc_client.list_pr_comments("PROJ", "repo", 1)
-        assert result == data
+        assert result["size"] == 2
+        assert [c["id"] for c in result["values"]] == [1, 2]
+        assert result["values"][1]["anchor"] == {"path": "a.md", "line": 7}
+        assert "anchor" not in result["values"][0]
 
     def test_list_pr_comments_cloud(self, cloud_client: BitbucketClient) -> None:
         data = {"values": []}

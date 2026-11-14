@@ -193,6 +193,20 @@ def format_pr_comment(raw: Dict[str, Any], config: Optional[BitbucketConfig]) ->
         "author": _extract_name(raw.get("author")),
         "createdDate": raw.get("createdDate") or raw.get("created_on"),
     }
+    # Keep the full text, the anchor and the reply thread.
+    result["text"] = raw.get("text") or raw.get("content", {}).get("raw")
+    for key in ("state", "severity"):
+        if raw.get(key):
+            result[key] = raw[key]
+    anchor = raw.get("anchor") or {}
+    if anchor.get("path"):
+        result["path"] = anchor["path"]
+        result["line"] = anchor.get("line")
+        if anchor.get("orphaned"):
+            result["outdated"] = True
+    replies = raw.get("comments") or []
+    if replies:
+        result["replies"] = [format_pr_comment(r, config) for r in replies]
     return result
 
 
