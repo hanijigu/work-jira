@@ -624,6 +624,25 @@ class BitbucketClient:
         except httpx.TimeoutException:
             raise ValueError(f"Timeout updating PR comment {comment_id}")
 
+    def resolve_pr_comment(self, project: str, repo: str, pr_id: int,
+                           comment_id: int, resolved: bool = True) -> Dict[str, Any]:
+        """Resolve or reopen the thread of a top-level PR comment."""
+        if self._auth_type == AuthType.CLOUD:
+            url = f"{self._cloud_repo_url(repo)}/pullrequests/{pr_id}/comments/{comment_id}/resolve"
+            method, payload, ok = ("POST" if resolved else "DELETE"), None, (200, 204)
+        else:
+            url = f"{self._dc_project_repo_url(project, repo)}/pull-requests/{pr_id}/comments/{comment_id}"
+            comment = self._request("GET", url).json()
+            method, ok = "PUT", (200,)
+            payload = {"version": comment.get("version", 0), "threadResolved": resolved}
+        try:
+            response = self._request(method, url, json=payload) if payload else self._request(method, url)
+            if response.status_code not in ok:
+                self._handle_error(response)
+            return response.json() if response.content else {"id": comment_id, "resolved": resolved}
+        except httpx.TimeoutException:
+            raise ValueError(f"Timeout resolving PR comment {comment_id}")
+
     def delete_pr_comment(self, project: str, repo: str, pr_id: int, comment_id: int) -> None:
         params: Dict[str, Any] = {}
         if self._auth_type == AuthType.CLOUD:

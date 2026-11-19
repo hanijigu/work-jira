@@ -515,6 +515,22 @@ def bitbucket_pr_comment_update(
 
 
 @mcp.tool()
+def bitbucket_pr_comment_resolve(
+    project: str, repo: str, pr_id: int, comment_id: int, resolved: bool = True
+) -> Dict[str, Any]:  # pragma: no cover
+    """Resolve (or reopen with resolved=false) a PR comment thread.
+
+    Args:
+        project: Project key
+        repo: Repository slug
+        pr_id: PR ID
+        comment_id: ID of the thread's top-level comment
+        resolved: True to resolve, False to reopen
+    """
+    return _get_client().resolve_pr_comment(project, repo, pr_id, comment_id, resolved)  # pragma: no cover
+
+
+@mcp.tool()
 def bitbucket_pr_comment_delete(
     project: str, repo: str, pr_id: int, comment_id: int
 ) -> Dict[str, Any]:  # pragma: no cover

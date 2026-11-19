@@ -1010,6 +1010,34 @@ class TestPRCommentOperations:
         assert result == updated
         assert mock_req.call_args.kwargs["json"]["content"]["raw"] == "new"
 
+    # --- resolve_pr_comment ---
+    def test_resolve_pr_comment_dc(self, dc_client: BitbucketClient) -> None:
+        resolved = {"id": 5, "threadResolved": True}
+        with patch.object(dc_client, "_request") as mock_req:
+            mock_req.side_effect = [_mock_response(200, {"id": 5, "version": 3}), _mock_response(200, resolved)]
+            result = dc_client.resolve_pr_comment("PROJ", "repo", 1, 5)
+        assert result == resolved
+        assert mock_req.call_args_list[1].args[0] == "PUT"
+        assert mock_req.call_args_list[1].kwargs["json"] == {"version": 3, "threadResolved": True}
+
+    def test_reopen_pr_comment_dc(self, dc_client: BitbucketClient) -> None:
+        with patch.object(dc_client, "_request") as mock_req:
+            mock_req.side_effect = [_mock_response(200, {"version": 4}), _mock_response(200, {"id": 5})]
+            dc_client.resolve_pr_comment("PROJ", "repo", 1, 5, resolved=False)
+        assert mock_req.call_args_list[1].kwargs["json"] == {"version": 4, "threadResolved": False}
+
+    def test_resolve_pr_comment_cloud(self, cloud_client: BitbucketClient) -> None:
+        with patch.object(cloud_client, "_request", return_value=_mock_response(200, {"user": {}})) as mock_req:
+            cloud_client.resolve_pr_comment("ignored", "repo", 1, 5)
+        assert mock_req.call_args.args[0] == "POST"
+        assert mock_req.call_args.args[1].endswith("/pullrequests/1/comments/5/resolve")
+
+    def test_resolve_pr_comment_timeout(self, dc_client: BitbucketClient) -> None:
+        with patch.object(dc_client, "_request") as mock_req:
+            mock_req.side_effect = [_mock_response(200, {"version": 0}), httpx.TimeoutException("t")]
+            with pytest.raises(ValueError, match="Timeout resolving PR comment"):
+                dc_client.resolve_pr_comment("PROJ", "repo", 1, 5)
+
     def test_update_pr_comment_timeout(self, dc_client: BitbucketClient) -> None:
         with patch.object(dc_client, "_request") as mock_req:
             mock_req.side_effect = [_mock_response(200, {"version": 0}), httpx.TimeoutException("t")]
